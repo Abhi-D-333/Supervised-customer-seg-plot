@@ -28,10 +28,12 @@ if train_file:
     if all(col in df_train.columns for col in required_cols):
         # Preprocess text and numeric features
         st.session_state.tfidf = TfidfVectorizer(max_features=50)
-        review_features = st.session_state.tfidf.fit_transform(df_train["Review"].fillna("")).toarray()
+        tfidf_matrix = st.session_state.tfidf.fit_transform(df_train["Review"].fillna(""))
+        tfidf_feature_names = [f"tfidf_{i}" for i in range(tfidf_matrix.shape[1])]
+        review_df = pd.DataFrame(tfidf_matrix.toarray(), columns=tfidf_feature_names)
 
         numeric_features = df_train[st.session_state.features].fillna(0)
-        X = pd.concat([pd.DataFrame(review_features), numeric_features.reset_index(drop=True)], axis=1)
+        X = pd.concat([review_df.reset_index(drop=True), numeric_features.reset_index(drop=True)], axis=1)
         y = df_train["Segment"]
 
         # Train classifier
@@ -57,9 +59,11 @@ if test_file and st.session_state.get("model"):
 
     required_test_cols = st.session_state.features + ["Review"]
     if all(col in df_test.columns for col in required_test_cols):
-        review_features = st.session_state.tfidf.transform(df_test["Review"].fillna("")).toarray()
+        tfidf_matrix = st.session_state.tfidf.transform(df_test["Review"].fillna(""))
+        review_df = pd.DataFrame(tfidf_matrix.toarray(), columns=tfidf_feature_names)
+
         numeric_features = df_test[st.session_state.features].fillna(0)
-        X_new = pd.concat([pd.DataFrame(review_features), numeric_features.reset_index(drop=True)], axis=1)
+        X_new = pd.concat([review_df.reset_index(drop=True), numeric_features.reset_index(drop=True)], axis=1)
 
         predictions = st.session_state.model.predict(X_new)
         df_test["Predicted Segment"] = predictions
@@ -73,7 +77,7 @@ if test_file and st.session_state.get("model"):
         st.subheader("🔎 Prediction Result Sample")
         st.write(df_test.head())
 
-        # Final Improved Visualization
+        # Visualization
         st.subheader("🌀 Visualizing Predicted Segments")
         fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -91,7 +95,7 @@ if test_file and st.session_state.get("model"):
                 color=colors(i)
             )
 
-        # Optional: Add centroids
+        # Add centroids
         centroids = df_test.groupby("Predicted Segment")[["PC1", "PC2"]].mean()
         ax.scatter(centroids["PC1"], centroids["PC2"], s=150, c='black', marker='X', label='Centroids')
 
