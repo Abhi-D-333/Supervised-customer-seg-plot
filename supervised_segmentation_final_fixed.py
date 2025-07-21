@@ -1,80 +1,110 @@
-
 import streamlit as st
 import pandas as pd
-import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.decomposition import PCA
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import numpy as np
 
-st.set_page_config(layout="wide")
+# App Config
+st.set_page_config(page_title="Supervised Segmentation", layout="wide")
 st.title("🎯 Supervised Customer Segmentation Dashboard")
 
 # Define features
-numeric_features = ["Age", "Income", "SpendingScore", "PurchaseFrequency"]
-text_feature = "Review"
-target_column = "Segment"
+st.session_state.features = ['Age', 'Income', 'SpendingScore', 'PurchaseFrequency']
 
-# Upload and Train
-st.header("🧠 Step 1: Upload Labeled Customer Data (With Segment column)")
-train_file = st.file_uploader("Upload training CSV", type=["csv"], key="train")
+# Step 1: Upload training data
+st.header("📥 Step 1: Upload Training Data")
+train_file = st.file_uploader("Upload training CSV (must include Segment & Review column)", type=["csv"])
+
 if train_file:
     df_train = pd.read_csv(train_file)
-    st.write(df_train.head())
+    st.write("📄 Training Data Preview", df_train.head())
 
-    if all(col in df_train.columns for col in numeric_features + [text_feature, target_column]):
-        # Pipeline for preprocessing
-        preprocessor = ColumnTransformer(transformers=[
-            ("text", TfidfVectorizer(max_features=50), text_feature),
-            ("num", StandardScaler(), numeric_features)
-        ])
+    required_cols = st.session_state.features + ["Review", "Segment"]
+    if all(col in df_train.columns for col in required_cols):
+        # Preprocess text and numeric features
+        st.session_state.tfidf = TfidfVectorizer(max_features=50)
+        review_features = st.session_state.tfidf.fit_transform(df_train["Review"].fillna("")).toarray()
 
-        # Full pipeline with classifier
-        model_pipeline = Pipeline([
-            ("preprocessor", preprocessor),
-            ("classifier", RandomForestClassifier(random_state=42))
-        ])
+        numeric_features = df_train[st.session_state.features].fillna(0)
+        X = pd.concat([pd.DataFrame(review_features), numeric_features.reset_index(drop=True)], axis=1)
+        y = df_train["Segment"]
 
-        # Train
-        model_pipeline.fit(df_train[[text_feature] + numeric_features], df_train[target_column])
-        st.session_state.model = model_pipeline
+        # Train classifier
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X, y)
+        st.session_state.model = model
+
+        # Fit PCA for 2D projection
         st.session_state.pca = PCA(n_components=2)
-        transformed = preprocessor.fit_transform(df_train[[text_feature] + numeric_features])
-        st.session_state.pca.fit(transformed)
+        st.session_state.pca.fit(X)
+
         st.success("✅ Model trained successfully!")
-
     else:
-        st.error(f"CSV must contain columns: {numeric_features + [text_feature, target_column]}")
+        st.error(f"CSV must contain columns: {required_cols}")
 
-# Upload test data
-st.header("📂 Step 2: Upload New Data to Predict Segments")
+# Step 2: Upload test data
+st.header("🔄 Step 2: Upload New Data to Predict Segments")
 test_file = st.file_uploader("Upload new customer data (without Segment)", type=["csv"], key="test")
-if test_file and "model" in st.session_state:
+
+if test_file and st.session_state.get("model"):
     df_test = pd.read_csv(test_file)
-    if all(col in df_test.columns for col in numeric_features + [text_feature]):
-        predictions = st.session_state.model.predict(df_test[[text_feature] + numeric_features])
-        df_test["PredictedSegment"] = predictions
+    st.write("🧾 Test Data Preview", df_test.head())
 
-        # PCA for visualization
-        transformed_test = st.session_state.model.named_steps["preprocessor"].transform(df_test[[text_feature] + numeric_features])
-        pca_test = st.session_state.pca.transform(transformed_test)
-        df_test["PC1"] = pca_test[:, 0]
-        df_test["PC2"] = pca_test[:, 1]
+    required_test_cols = st.session_state.features + ["Review"]
+    if all(col in df_test.columns for col in required_test_cols):
+        review_features = st.session_state.tfidf.transform(df_test["Review"].fillna("")).toarray()
+        numeric_features = df_test[st.session_state.features].fillna(0)
+        X_new = pd.concat([pd.DataFrame(review_features), numeric_features.reset_index(drop=True)], axis=1)
 
-        st.subheader("📊 Visualization (PCA Projection)")
-        fig, ax = plt.subplots()
-        scatter = ax.scatter(df_test["PC1"], df_test["PC2"], c=pd.Categorical(df_test["PredictedSegment"]).codes, cmap="tab10", s=60)
-        ax.set_xlabel("PC1")
-        ax.set_ylabel("PC2")
-        ax.set_title("Customer Segments (Predicted)")
+        predictions = st.session_state.model.predict(X_new)
+        df_test["Predicted Segment"] = predictions
+
+        # PCA projection
+        pca_components = st.session_state.pca.transform(X_new)
+        df_test["PC1"] = pca_components[:, 0]
+        df_test["PC2"] = pca_components[:, 1]
+
+        st.success("🎯 Segments predicted successfully!")
+        st.subheader("🔎 Prediction Result Sample")
+        st.write(df_test.head())
+
+        # Final Improved Visualization
+        st.subheader("🌀 Visualizing Predicted Segments")
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        segments = df_test["Predicted Segment"].unique()
+        colors = cm.get_cmap("tab10", len(segments))
+
+        for i, segment in enumerate(sorted(segments)):
+            subset = df_test[df_test["Predicted Segment"] == segment]
+            ax.scatter(
+                subset["PC1"],
+                subset["PC2"],
+                label=f"Segment {segment}",
+                alpha=0.7,
+                s=80,
+                color=colors(i)
+            )
+
+        # Optional: Add centroids
+        centroids = df_test.groupby("Predicted Segment")[["PC1", "PC2"]].mean()
+        ax.scatter(centroids["PC1"], centroids["PC2"], s=150, c='black', marker='X', label='Centroids')
+
+        ax.set_title("📊 PCA Projection of Predicted Segments", fontsize=14)
+        ax.set_xlabel("Principal Component 1", fontsize=12)
+        ax.set_ylabel("Principal Component 2", fontsize=12)
+        ax.legend(title="Segments", bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True)
+
         st.pyplot(fig)
 
-        st.subheader("📁 Predicted Output")
-        st.dataframe(df_test)
-        csv = df_test.to_csv(index=False).encode("utf-8")
-        st.download_button("Download Predictions CSV", data=csv, file_name="predicted_segments.csv", mime="text/csv")
+        # Segment-wise summary
+        st.subheader("📈 Segment-wise Summary")
+        st.write(df_test.groupby("Predicted Segment")[st.session_state.features].mean().round(2))
     else:
-        st.error(f"CSV must contain: {numeric_features + [text_feature]}")
+        st.error(f"Test CSV must contain: {required_test_cols}")
