@@ -9,14 +9,27 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
 
-# App Config
+# ---------------------- CONFIG ----------------------
 st.set_page_config(page_title="Supervised Segmentation", layout="wide")
 st.title("🎯 Supervised Customer Segmentation Dashboard")
-
-# Define features
 st.session_state.features = ['Age', 'Income', 'SpendingScore', 'PurchaseFrequency']
 
-# Step 1: Upload training data
+# ---------------------- HELPER ----------------------
+def convert_review_to_text(val):
+    try:
+        val = float(val)
+        if val >= 4.5:
+            return "excellent"
+        elif val >= 3.5:
+            return "good"
+        elif val >= 2.5:
+            return "average"
+        else:
+            return "poor"
+    except:
+        return "unknown"
+
+# ---------------------- STEP 1: TRAINING ----------------------
 st.header("📥 Step 1: Upload Training Data")
 train_file = st.file_uploader("Upload training CSV (must include Segment & Review column)", type=["csv"])
 
@@ -26,9 +39,11 @@ if train_file:
 
     required_cols = st.session_state.features + ["Review", "Segment"]
     if all(col in df_train.columns for col in required_cols):
-        # Preprocess text and numeric features
+        df_train["ReviewText"] = df_train["Review"].fillna("").apply(convert_review_to_text)
+        
+        # TF-IDF Vectorizer
         st.session_state.tfidf = TfidfVectorizer(max_features=50)
-        tfidf_matrix = st.session_state.tfidf.fit_transform(df_train["Review"].fillna(""))
+        tfidf_matrix = st.session_state.tfidf.fit_transform(df_train["ReviewText"])
         tfidf_feature_names = [f"tfidf_{i}" for i in range(tfidf_matrix.shape[1])]
         review_df = pd.DataFrame(tfidf_matrix.toarray(), columns=tfidf_feature_names)
 
@@ -49,7 +64,7 @@ if train_file:
     else:
         st.error(f"CSV must contain columns: {required_cols}")
 
-# Step 2: Upload test data
+# ---------------------- STEP 2: TESTING ----------------------
 st.header("🔄 Step 2: Upload New Data to Predict Segments")
 test_file = st.file_uploader("Upload new customer data (without Segment)", type=["csv"], key="test")
 
@@ -59,7 +74,8 @@ if test_file and st.session_state.get("model"):
 
     required_test_cols = st.session_state.features + ["Review"]
     if all(col in df_test.columns for col in required_test_cols):
-        tfidf_matrix = st.session_state.tfidf.transform(df_test["Review"].fillna(""))
+        df_test["ReviewText"] = df_test["Review"].fillna("").apply(convert_review_to_text)
+        tfidf_matrix = st.session_state.tfidf.transform(df_test["ReviewText"])
         review_df = pd.DataFrame(tfidf_matrix.toarray(), columns=tfidf_feature_names)
 
         numeric_features = df_test[st.session_state.features].fillna(0)
